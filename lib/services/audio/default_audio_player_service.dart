@@ -473,22 +473,46 @@ class DefaultAudioPlayerService extends AudioPlayerService {
   }
 
   MediaItem _episodeToMediaItem(Episode episode, String uri) {
-    return MediaItem(
-      id: uri,
-      title: episode.title ?? 'Unknown Title',
-      artist: episode.author ?? 'Unknown Title',
-      artUri: Uri.parse(episode.imageUrl!),
-      duration: Duration(seconds: episode.duration),
-      extras: <String, dynamic>{
-        'position': episode.position,
-        'downloaded': episode.downloaded,
-        'speed': _playbackSpeed,
-        'trim': _trimSilence,
-        'boost': _volumeBoost,
-        'eid': episode.guid,
-      },
-    );
+  // Smart resume: calculate rewind based on time since last played
+  var position = episode.position;
+  
+  if (position > 0 && episode.lastUpdated != null) {
+    final timeSinceLastPlayed = DateTime.now().difference(episode.lastUpdated!);
+    int rewindMilliseconds = 0;
+    
+    if (timeSinceLastPlayed.inMinutes < 5) {
+      rewindMilliseconds = 5000;  // Recent: rewind 5 seconds
+    } else if (timeSinceLastPlayed.inMinutes < 60) {
+      rewindMilliseconds = 10000; // Within an hour: rewind 10 seconds
+    } else if (timeSinceLastPlayed.inHours < 24) {
+      rewindMilliseconds = 20000; // Within a day: rewind 20 seconds
+    } else {
+      rewindMilliseconds = 30000; // More than a day: rewind 30 seconds
+    }
+    
+    // Apply the rewind (ensure we don't go below 0)
+    position = position > rewindMilliseconds ? position - rewindMilliseconds : 0;
+    
+    log.fine('Smart resume: Original position ${episode.position}ms, rewinding ${rewindMilliseconds}ms to ${position}ms (last played ${timeSinceLastPlayed.inMinutes} minutes ago)');
   }
+  
+  return MediaItem(
+    id: uri,
+    title: episode.title ?? 'Unknown Title',
+    artist: episode.author ?? 'Unknown Title',
+    artUri: Uri.parse(episode.imageUrl!),
+    duration: Duration(seconds: episode.duration),
+    extras: <String, dynamic>{
+      'position': position,
+      'downloaded': episode.downloaded,
+      'speed': _playbackSpeed,
+      'trim': _trimSilence,
+      'boost': _volumeBoost,
+      'eid': episode.guid,
+    },
+  );
+}
+
 
   void _handleAudioServiceTransitions() {
     _audioHandler.playbackState.distinct((previousState, currentState) {
